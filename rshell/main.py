@@ -55,8 +55,12 @@ import tokenize
 import shlex
 import itertools
 from serial.tools import list_ports
+import importlib
 
 import traceback
+
+# Macros: values are strings or 2-lists
+macros = {}
 
 if sys.platform == 'win32':
     EXIT_STR = 'Use the exit command to exit rshell.'
@@ -146,12 +150,15 @@ HAS_BUFFER = False
 IS_UPY = False
 DEBUG = False
 USB_BUFFER_SIZE = 512
-RPI_PICO_USB_BUFFER_SIZE = 32
+RPI_PICO_USB_BUFFER_SIZE = 512
 UART_BUFFER_SIZE = 32
 BUFFER_SIZE = USB_BUFFER_SIZE
 QUIET = False
 RTS = ''
 DTR = ''
+
+IGFILE_NAME = '.rshell-ignore'
+MACFILE_NAME = 'rshell_macros'
 
 # It turns out that just because pyudev is installed doesn't mean that
 # it can actually be used. So we only bother to try if we're running
@@ -977,6 +984,21 @@ def rsync(src_dir, dst_dir, mirror, dry_run, print_func, recursed, sync_hidden):
     for name, stat in src_files:
         d_src[name] = stat
 
+    # Check source for an ignore file
+    all_src = auto(listdir_stat, src_dir, show_hidden=True)
+    igfiles = [x for x in all_src if x[0] == IGFILE_NAME]
+    set_ignore = set()
+    if len(igfiles):
+        igfile, mode = igfiles[0]
+        if mode_isfile(stat_mode(mode)):
+            with open(src_dir + '/' + igfile, 'r') as f:
+                for line in f.readlines():
+                    line = line.strip()
+                    if line:
+                        set_ignore.add(line)
+        else:
+            print_err('Ignore file "{:s}" is not a file'.format(IGFILE_NAME))
+
     d_dst = {}
     dst_files = auto(listdir_stat, dst_dir, show_hidden=sync_hidden)
     if dst_files is None: # Directory does not exist
@@ -987,7 +1009,7 @@ def rsync(src_dir, dst_dir, mirror, dry_run, print_func, recursed, sync_hidden):
             d_dst[name] = stat
 
     set_dst = set(d_dst.keys())
-    set_src = set(d_src.keys())
+    set_src = set(d_src.keys()) - set_ignore
     to_add = set_src - set_dst  # Files to copy to dest
     to_del = set_dst - set_src  # To delete from dest
     to_upd = set_dst.intersection(set_src) # In both: may need updating
@@ -2216,6 +2238,78 @@ class Shell(cmd.Cmd):
         else:
             print('No boards connected')
 
+    def complete_m(self, text, line, begidx, endidx):  # Assume macro works on filenames for completion.
+        return self.filename_complete(text, line, begidx, endidx)
+
+    def do_m(self, line):
+        """m macro_name [[arg0] arg1]...
+
+           Expand a macro with args and run.
+        """
+        msg = '''usage m MACRO [[[arg0] arg1] ...]
+        Run macro MACRO with any required arguments.
+        In general args should be regarded as mandatory. In the case where
+        no args are passed to a macro expecting some the macro will be run
+        with each placeholder replaced with an empty string.'''
+        tokens = [x for x in line.split(' ') if x]
+        cmd = tokens[0]
+        if cmd in macros:
+            data = macros[cmd]
+            if isinstance(data, str):
+                go = data
+            else:  # List or tuple: discard help
+                go = data[0]
+            if len(tokens) > 1:  # Args to process
+                try:
+                    to_run = go.format(*tokens[1:])
+                except:
+                    print_err('Macro {} is incompatible with args {}'.format(cmd, tokens[1:]))
+                    return
+            else:
+                to_run = go.format('')
+            self.print(to_run)
+            self.onecmd(to_run)
+        elif cmd == '-h' or cmd == '--help':
+            self.print(msg)
+        else:
+            print_err('Unknown macro', cmd)
+
+    def do_lm(self, line):
+        """lm
+
+           Lists available macros.
+        """
+        msg = '''usage lm [MACRO]
+        list loaded macros.
+        Positional argument
+        MACRO the name of a single macro to list.'''
+        if not macros:
+            print_err('No macros loaded.')
+            return
+        def add_col(l):
+            d = macros[l]
+            sp = ''
+            if isinstance(d, str):
+                cols.append((l, sp, d, '', ''))
+            else:
+                cols.append((l, sp, d[0], sp, d[1]))
+
+        l = line.strip()
+        cols = []
+        if l:
+            if l in macros:
+                add_col(l)
+            elif l == '-h' or l == '--help':
+                self.print(msg)
+                return
+            else:
+                print_err('Unknown macro {}'.format(l))
+                return
+        else:
+            for l in macros:
+                add_col(l)
+        column_print('<<<<<', cols, self.print)
+
     def complete_cat(self, text, line, begidx, endidx):
         return self.filename_complete(text, line, begidx, endidx)
 
@@ -2937,6 +3031,9 @@ class Shell(cmd.Cmd):
         ),
     )
 
+    def complete_rsync(self, text, line, begidx, endidx):
+        return self.filename_complete(text, line, begidx, endidx)
+
     def do_rsync(self, line):
         """rsync [-m|--mirror] [-n|--dry-run] [-q|--quiet] SRC_DIR DEST_DIR
 
@@ -3143,6 +3240,12 @@ def real_main():
             # The readline that comes with OSX screws up colors in the prompt
             global FAKE_INPUT_PROMPT
             FAKE_INPUT_PROMPT = True
+
+    if load_macros():  # Attempt to load default macro module
+        print('Default macro file {} loaded OK.'.format(MACFILE_NAME))
+    if args.macro_module:  # Attempt to load a macro module
+        if load_macros(args.macro_module):
+            print('Macro file {} loaded OK.'.format(args.macro_module))
 
     global ASCII_XFER
     ASCII_XFER = args.ascii_xfer

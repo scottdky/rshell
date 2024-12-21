@@ -49,6 +49,26 @@ Debian/Ubuntu users can get pip3 using:
 
     sudo apt-get install python3-pip
 
+This will install Dave Hylands' official version.
+
+To replace it with this fork, create a directory on your PC and clone this repo to it.
+
+::
+
+    $ git clone https://github.com/peterhinch/rshell
+
+You need to replace a file in the rshell directory with one from this repo, namely rshell/main.py.
+The original's location depends on your Python 3 version. To find it issue
+
+::
+
+    $ find /usr -type d -name "rshell"
+    /usr/local/lib/python3.6/dist-packages/rshell
+
+After replacing the file test the result by running rshell and issuing the lm command. Once satisfied
+that this version is running, the clone directory tree may be deleted. I also recommend making this
+README accessible via a weblink or otherwise.
+
 Serial Port Permissions (linux)
 ===============================
 
@@ -134,6 +154,8 @@ following displayed:
                             Set the editor to use (default 'vi')
       -f FILENAME, --file FILENAME
                             Specifies a file of commands to process.
+      -m MACRO_MODULE, --macros MACRO_MODULE
+                            Specify a macro module.
       -d, --debug           Enable debug features
       -n, --nocolor         Turn off colorized output
       --wait                How long to wait for serial port
@@ -179,6 +201,12 @@ be used.
 
 Specifies a file of rshell commands to process. This allows you to
 create a script which executes any valid rshell commands.
+
+-m MACRO_MODULE, --macros MACRO_MODULE
+--------------------------------------
+
+Specifies a Python module containing macros which may be expanded at
+the rshell prompt. See below for the file format and its usage.
 
 -n, --nocolor
 -------------
@@ -393,7 +421,7 @@ df
     -h, --human-readable  Prints sizes in a human-readable format using power of 1024
     -H, --si              Prints sizes in a human-readable format using power of 1000
 
-Gets filesystem available space based on statvfs. Granularity is limited 
+Gets filesystem available space based on statvfs. Granularity is limited
 to filesystem block size.
 
 
@@ -571,6 +599,12 @@ Synchronisation is performed by comparing the date and time of source
 and destination files. Files are copied if the source is newer than the
 destination.
 
+Synchronisation can be configured to ignore files such as documents,
+usually to conserve space on the destination. This is done by means
+of a file named .rshell-ignore. This should comprise a list of files
+and/or subdirectories with each item on a separate line. If such a
+file is found in a source directory, items found in the file's
+directory that match its contents will not be synchronised.
 
 shell
 -----
@@ -589,6 +623,105 @@ This will invoke a command, and return back to rshell. Example:
     !make deploy
 
 will flash the pyboard.
+
+lm
+--
+
+::
+
+    usage lm [macro_name]
+
+    If issued without an arg lists available macros, otheriwse lists the
+    specified macro.
+
+m
+-
+
+::
+
+    usage m macro_name [arg0 [arg1 [args...]]]
+
+    Expands the named macro, passing it any supplied positional args,
+    and executes it.
+
+Macros
+======
+
+Macros enable short strings to be expanded into longer ones and enable
+common names to be used to similar or different effect across multiple
+projects. They also enable rshell functionality to be enhanced, e.g.
+by adding an mv command to move files.
+
+Macros are defined by macro modules: these comprise Python code. Their
+filenames must conform to Python rules and they should be located on the
+Python path.
+
+If a module named rshell_macros.py is found, this will be imported. An example
+rshell_macros.py is shown below.
+
+If rshell is invoked with -m MACRO_MODULE argument, the specified Python
+module will (if found) be imported and its macros appended to any in
+rshell_macros.py.
+
+Macro modules should contain a dict named macros. Each key should be a string
+specifying the name; the value may be a string (being the expansion) or a
+2-tuple. In the case of a tuple, element[0] is the expansion with
+element[1] being an arbitrary help string.
+
+The macro name must conform to Python rules for dict keys. The expansion
+string may not contain newline characters. Multi-line expansions are
+supported by virtue of rshell's ; operator: see the mv macro below.
+
+The expansion string may contain argument specifiers compatible with the
+Python string format operator. This enables arguments passed to the macro
+to be expanded in ways which are highly flexible.
+
+Because macro modules contain Python code there are a variety of ways to
+configure them: for example macro modules can impport other macro modules.
+One approach is to use rshell_macros.py to define global macros applicable
+to all projects with project-specific macros being appended with the -m
+command line argument.
+
+rshell_macros.py:
+
+::
+
+    macros = {}
+    macros['..'] = 'cd ..'
+    macros['...'] = 'cd ../..'
+    macros['ll'] = 'ls -al {}', 'List a directory (default current one)'
+    macros['lf'] = 'ls -al /flash/{}', 'List contents of target flash'
+    macros['lsd'] = 'ls -al /sd/{}'
+    macros['lpb'] = 'ls -al /pyboard/{}'
+    macros['mv'] = 'cp {0} {1}; rm {0}', 'File move command'
+
+A module specific to the foo project:
+
+::
+
+    macros['sync'] = 'rsync foo/ /flash/foo/', 'Sync foo project'
+    macros['run'] = 'repl ~ import foo.demos.{}', 'Run foo demo e.g. > m run hst'
+    macros['proj'] = 'ls -l /flash/foo/{}', 'List directory in foo project.'
+    macros['cpf'] = 'cp foo/py/{} /flash/foo/py/; repl ~ import foo.demos.{}', 'Copy a py file, run a demo'
+    macros['cpd'] = 'cp foo/demos/{0}.py /flash/foo/demos/; repl ~ import foo.demos.{0}', 'Copy a demo file and run it'
+
+If at the rshell prompt we issue
+
+::
+
+    > m cpd hst
+
+this will expand to
+
+::
+
+    > cp foo/demos/hst.py /flash/foo/demos/; repl ~ import foo.demos.hst
+
+In general args should be regarded as mandatory. Any excess args supplied
+will be ignored. In the case where no args are passed to a macro that
+expects some, the macro will be expanded and run with each placeholder
+replaced with an empty string. This enables directory listing macros such as
+'proj' above to run with zero or one argument.
 
 Pattern Matching
 ================
