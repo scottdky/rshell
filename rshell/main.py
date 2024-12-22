@@ -19,6 +19,7 @@
 # tree and not from some installed version.
 
 import sys
+sys.path.append(".") # so that rshell_macros can be found in the cwd
 try:
     import rshell.dfutils as dfutils
     from rshell.getch import getch
@@ -150,7 +151,7 @@ HAS_BUFFER = False
 IS_UPY = False
 DEBUG = False
 USB_BUFFER_SIZE = 512
-RPI_PICO_USB_BUFFER_SIZE = 512
+RPI_PICO_USB_BUFFER_SIZE = 32
 UART_BUFFER_SIZE = 32
 BUFFER_SIZE = USB_BUFFER_SIZE
 QUIET = False
@@ -3047,6 +3048,41 @@ class Shell(cmd.Cmd):
         rsync(src_dir, dst_dir, mirror=args.mirror, dry_run=args.dry_run,
              print_func=pf, recursed=False, sync_hidden=args.all)
 
+def load_macros(mod_name=None):
+    """Update the global macros dict.
+    Validate on import to avoid runtime errors as far as possible.
+    """
+    default = mod_name is None
+    if default:
+        mod_name = MACFILE_NAME
+    try:
+        mmod = importlib.import_module(mod_name)
+    except ImportError:
+        if not default:
+            print("Can't import macro module", mod_name)
+        return False
+    except:
+        print("Macro module {} is invalid".format(mod_name))
+        return False
+
+    if hasattr(mmod, 'macros') and isinstance(mmod.macros, dict):
+        md = mmod.macros
+    else:
+        print('Macro module {} has missing or invalid dict.'.format(mod_name))
+        return False
+    for k, v in md.items():
+        if isinstance(v, str):
+            s = v
+        elif isinstance(v, tuple) or isinstance(v, list):
+            s = v[0]
+        else:
+            print('Macro {} is invalid.'.format(k))
+            return False
+        if '\n' in s:
+            print('Invalid multi-line macro {} {}'.format(k, s))
+            return False
+    macros.update(md)
+    return True
 
 def real_main():
     """The main program."""
@@ -3133,6 +3169,11 @@ def real_main():
         "-f", "--file",
         dest="filename",
         help="Specifies a file of commands to process."
+    )
+    parser.add_argument(
+        "-m", "--macros",
+        dest="macro_module",
+        help="Specify a macro module."
     )
     parser.add_argument(
         "-d", "--debug",
