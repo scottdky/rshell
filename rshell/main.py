@@ -1064,6 +1064,25 @@ def rsync(src_dir, dst_dir, mirror, dry_run, print_func, recursed, sync_hidden):
                     if not dry_run:
                         cp(src_filename, dst_filename)
 
+def move_file(old_filename, new_filename):
+    """Creates one or more directories."""
+    import os
+    try:
+        os.rename(old_filename, new_filename)
+    except:
+        return False
+    return True
+
+def mv(src_filename, dst_filename):
+    """Copies one file to another. The source file may be local or remote and
+       the destination file may be local or remote.
+    """
+    src_dev, src_dev_filename = get_dev_and_path(src_filename)
+    dst_dev, dst_dev_filename = get_dev_and_path(dst_filename)
+    if src_dev is dst_dev:
+        # src and dst are either on the same remote, or both are on the host
+        return auto(move_file, src_filename, dst_dev_filename)
+
 
 # rtc_time[0] - year    4 digit
 # rtc_time[1] - month   1..12
@@ -3047,6 +3066,33 @@ class Shell(cmd.Cmd):
         pf = print if args.dry_run or verbose else lambda *args : None
         rsync(src_dir, dst_dir, mirror=args.mirror, dry_run=args.dry_run,
              print_func=pf, recursed=False, sync_hidden=args.all)
+
+    def complete_mv(self, text, line, begidx, endidx):
+        return self.filename_complete(text, line, begidx, endidx)
+
+    def do_mv(self, line):
+        """usage: mv OLD_FILENAME NEW_FILENAME
+
+            Renames a file or directory.
+        """
+        args = self.line_to_args(line)
+        filenames = [arg for arg in args]
+        if len(filenames) != 2:
+            print_err('You must specify both the old and the new names')
+            return
+        old_filename = resolve_path(filenames[0])
+        new_filename = resolve_path(filenames[1])
+        old_mode = auto(get_mode, old_filename)
+        new_mode = auto(get_mode, new_filename)
+        if not mode_exists(old_mode):
+            print_err("Cannot access '{}'".format(old_filename))
+            return
+        if mode_exists(new_mode):
+            print_err("Destination '{}' already exists".format(new_filename))
+            return
+        mv(old_filename, new_filename)
+
+
 
 def load_macros(mod_name=None):
     """Update the global macros dict.
